@@ -7,7 +7,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 ================================================================ */
 const NAVY = "#0B1E3D";
 const GOLD = "#C9A227";
-const REPORT_LOGO_SRC = "/pcg-mindrift-report-logo.png";
+const REPORT_LOGO_SRC = "/pcg-mindrift-report-logo.png?v=print-safe";
 
 // ── API base: uses env var in production, falls back to relative /api path in dev ──
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -1262,10 +1262,11 @@ function Reports({ docs, user, onUpdate }) {
     const generatedAt = new Date();
     const logoBytes = await loadReportLogoBytes();
     const hasLogo = Boolean(logoBytes?.length);
+    const blankRow = Array(headers.length).fill("");
     const aoa = [
-      [hasLogo ? "" : "PCG | MindRift"],
-      [""],
-      [""],
+      hasLogo ? blankRow : ["PCG | MindRift", ...blankRow.slice(1)],
+      blankRow,
+      blankRow,
       [`Generated: ${generatedAt.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })}`, "", "", "", "", "", "", "", `Records: ${rows.length}`],
       headers,
       ...dataRows,
@@ -1283,8 +1284,11 @@ function Reports({ docs, user, onUpdate }) {
       bottom: { style: "thin", color: { rgb: "DBE3EE" } },
       left: { style: "thin", color: { rgb: "DBE3EE" } },
     };
+    const whiteFill = { fgColor: { rgb: "FFFFFF" } };
+    const altFill = { fgColor: { rgb: "F8FAFC" } };
     const baseCell = {
       font: { name: "Aptos", sz: 11, color: { rgb: "334155" } },
+      fill: whiteFill,
       alignment: { vertical: "top" },
       border,
     };
@@ -1317,16 +1321,31 @@ function Reports({ docs, user, onUpdate }) {
     ws["!autofilter"] = { ref: tableRef };
     ws["!freeze"] = { xSplit: 0, ySplit: 5, topLeftCell: "A6", activePane: "bottomLeft", state: "frozen" };
 
+    for (let r = 0; r < lastRow; r += 1) {
+      for (let c = 0; c <= lastCol; c += 1) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (!ws[addr]) ws[addr] = { t: "s", v: "" };
+        ws[addr].s = {
+          font: { name: "Aptos", sz: 11, color: { rgb: "334155" } },
+          fill: whiteFill,
+          alignment: { vertical: "top" },
+        };
+      }
+    }
+
     if (!hasLogo) ws.A1.s = {
       font: { name: "Aptos Display", sz: 18, bold: true, color: { rgb: "0B1E3D" } },
+      fill: whiteFill,
       alignment: { vertical: "center" },
     };
     ws.A4.s = {
       font: { name: "Aptos", sz: 10, color: { rgb: "64748B" } },
+      fill: whiteFill,
       alignment: { vertical: "center" },
     };
     ws.I4.s = {
       font: { name: "Aptos", sz: 10, bold: true, color: { rgb: "0B1E3D" } },
+      fill: whiteFill,
       alignment: { horizontal: "right", vertical: "center" },
     };
 
@@ -1351,8 +1370,10 @@ function Reports({ docs, user, onUpdate }) {
       for (let c = 0; c <= lastCol; c += 1) {
         const addr = XLSX.utils.encode_cell({ r, c });
         if (!ws[addr]) continue;
+        const rowFill = idx % 2 === 0 ? whiteFill : altFill;
         ws[addr].s = {
           ...baseCell,
+          fill: rowFill,
           alignment: { ...baseCell.alignment, horizontal: c >= 5 && c <= 7 ? "right" : "left", wrapText: c === 12 },
         };
         if (c === 4 || c === 11) ws[addr].z = "yyyy-mm-dd";
@@ -1374,7 +1395,7 @@ function Reports({ docs, user, onUpdate }) {
     setTimeout(() => setExporting(""), 250);
   }
 
-  function exportPdf() {
+  async function exportPdf() {
     if (exporting) return;
     setExporting("pdf");
     document.body.classList.add("printing-report");
@@ -1386,10 +1407,29 @@ function Reports({ docs, user, onUpdate }) {
       setExporting("");
     };
     window.addEventListener("afterprint", cleanup);
-    setTimeout(() => {
+    try {
+      await new Promise(requestAnimationFrame);
+      const logo = document.querySelector(".report-export-logo");
+      if (logo) {
+        const timeout = new Promise(resolve => window.setTimeout(resolve, 1500));
+        const ready = logo.decode
+          ? logo.decode().catch(() => {})
+          : new Promise(resolve => {
+              if (logo.complete && logo.naturalWidth > 0) resolve();
+              else {
+                logo.onload = resolve;
+                logo.onerror = resolve;
+              }
+            });
+        await Promise.race([ready, timeout]);
+      }
+      await new Promise(requestAnimationFrame);
       fallbackTimer = window.setTimeout(cleanup, 10000);
       window.print();
-    }, 100);
+    } catch {
+      fallbackTimer = window.setTimeout(cleanup, 10000);
+      window.print();
+    }
   }
 
   async function del(id) {
