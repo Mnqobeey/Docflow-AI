@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+node_modules/
+dist/
+build/
+
+*.log
+docflow-server-*.log
+docflow-dev*.log
+
+.node/
+node-win-x64.zip
+.venv/
