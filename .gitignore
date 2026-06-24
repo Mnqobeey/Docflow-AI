@@ -12,5 +12,13 @@ docflow-server-*.log
 docflow-dev*.log
 
 .node/
+.tools/
 node-win-x64.zip
 .venv/
+.vscode/
+
+ui-review/
+client/ui-review/
+screenshots/
+server/data/
+IMPLEMENTATION_PLAN.md

@@ -17,7 +17,7 @@ async function readApiJson(res, fallback = "Request failed") {
 
   if (!contentType.includes("application/json")) {
     const hint = text.trim().startsWith("<")
-      ? "The API returned HTML instead of JSON. Check that VITE_API_URL points to the Express backend, not the frontend, and restart the backend after code changes."
+      ? "Unable to connect to the server. Please try again."
       : text.trim();
     throw new Error(hint || fallback);
   }
@@ -120,10 +120,9 @@ function defaultViewForUser(user) {
 }
 
 function extractionMethodLabel(method = "") {
-  if (method.includes("gemini")) return "Gemini cleanup";
-  if (method.includes("openrouter")) return "OpenRouter cleanup";
-  if (method.includes("fallback")) return "OCR/rules fallback";
-  if (method.includes("rules")) return "OCR/rules";
+  if (method.includes("sample")) return "Sample document";
+  if (method.includes("gemini") || method.includes("openrouter")) return "Enhanced extraction";
+  if (method.includes("fallback") || method.includes("rules")) return "Document extraction";
   return method || "Extraction";
 }
 
@@ -413,7 +412,7 @@ async function aiExtract(file, docType = "invoice") {
         documentType: docType,
       }),
     });
-    const data = await readApiJson(res, "Extraction failed");
+      const data = await readApiJson(res, "The document could not be processed. Please try again.");
     return {
       extracted: { ...data.extracted, document_type: normalizeDocTypeClient(data.extracted?.document_type) || docType },
       meta: {
@@ -432,7 +431,7 @@ async function aiExtract(file, docType = "invoice") {
 }
 
 function fallbackInsights(docs) {
-  if (!docs.length) return ["No report data is available yet. Upload demo documents to generate insights."];
+  if (!docs.length) return ["No submitted document records are available yet."];
   const byVendor = {}, byMonth = {};
   let total = 0, vat = 0;
   docs.forEach(d => {
@@ -535,6 +534,15 @@ function EmptyApprovalState({ message }) {
   );
 }
 
+function FilterField({ label, children }) {
+  return (
+    <div>
+      <p style={{ fontSize: 12, fontWeight: 700, color: "#64748b", margin: "0 0 5px" }}>{label}</p>
+      {children}
+    </div>
+  );
+}
+
 function Steps({ status, approvals = [] }) {
   const cur  = stepOf(status);
   const done = status === "approved";
@@ -630,7 +638,7 @@ function Login({ onLogin, error, loading }) {
           </button>
 
           <div className="demo-account-panel">
-            <p>Demo accounts</p>
+            <p>Available sign-ins</p>
             <div className="demo-account-list">
               {DEMO_USERS.map(du => (
                 <button key={du.username} onClick={() => { setU(du.username); setP(du.password); }} className="demo-account">
@@ -770,7 +778,7 @@ function Upload({ user, docs, onUpdate }) {
       setExtracted(normalized);
       setExtractionMeta(data.meta || null);
       setDup(dupCheck(normalized, h, docs));
-    } catch (e) { setError("Extraction failed: " + e.message); }
+    } catch (e) { setError("The document could not be processed. Please try again."); }
     finally { setExtracting(false); }
   }
 
@@ -779,7 +787,7 @@ function Upload({ user, docs, onUpdate }) {
     setFile({ name: d.fileName });
     setHash("demo-" + uid());
     setExtracted({ ...d.extracted, document_type: d.type });
-    setExtractionMeta({ method: "seeded_demo", confidence: 1, notes: "Seeded demo document for recruiter testing; fields remain editable before submission." });
+    setExtractionMeta({ method: "sample_document", confidence: 1, notes: "Sample document details loaded for review before submission." });
     setDocType(d.type);
     setDup(dupCheck(d.extracted, null, docs));
   }
@@ -791,13 +799,13 @@ function Upload({ user, docs, onUpdate }) {
       const token = localStorage.getItem("token");
       if (token) {
         const res = await fetch(apiUrl("/api/docs"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: docType, fileName: file?.name || "document.pdf", fileMimeType: file?.type || "application/pdf", fileHash: hash, extracted: { ...extracted, document_type: docType }, extractionMeta, isDup: dup?.dup || false, dupReason: dup?.reason || null }) });
-        const saved = await readApiJson(res, "Save failed");
+        const saved = await readApiJson(res, "The document could not be submitted. Please try again.");
         const updated = [...docs, saved]; setStore(updated); onUpdate(updated); setSubmitted(true); reset();
       } else {
         const doc = { id: uid(), type: docType, fileName: file?.name || "document.pdf", fileMimeType: file?.type || "application/pdf", fileHash: hash, uploadedBy: user.name, uploadDate: new Date().toISOString(), extracted: { ...extracted, document_type: docType }, extractionMeta, status: "pending_approval_1", isDup: dup?.dup || false, dupReason: dup?.reason || null, approvals: [] };
         const updated = [...docs, doc]; setStore(updated); onUpdate(updated); setSubmitted(true); reset();
       }
-    } catch (e) { setError("Save failed: " + e.message); }
+    } catch (e) { setError("The document could not be submitted. Please try again."); }
     finally { setSaving(false); }
   }
 
@@ -818,7 +826,7 @@ function Upload({ user, docs, onUpdate }) {
       <div className="page-shell page-enter">
       <div className="page-header">
         <h2>Upload Document</h2>
-        <p>Upload or use a demo document to test extraction, duplicate checks, and approval routing.</p>
+        <p>Upload an invoice or credit note, or use a sample document to review extraction, duplicate checks, and approval routing.</p>
       </div>
 
       <div className="premium-card intake-console" style={{ backgroundColor: "#fff", borderRadius: 20, padding: 20, border: "1px solid #f3f4f6", boxShadow: "0 1px 8px rgba(0,0,0,0.06)" }}>
@@ -844,7 +852,7 @@ function Upload({ user, docs, onUpdate }) {
 
         {/* Demo strip */}
         <div className="demo-strip" style={{ backgroundColor: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, marginBottom: 16 }}>
-          <p style={{ fontSize: 12, fontWeight: 700, color: "#475569", margin: "0 0 8px" }}>Demo documents</p>
+          <p style={{ fontSize: 12, fontWeight: 700, color: "#475569", margin: "0 0 8px" }}>Sample documents</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {DEMO_DOCS.map((d, i) => (
               <button key={i} onClick={() => loadDemo(d)}
@@ -855,7 +863,7 @@ function Upload({ user, docs, onUpdate }) {
           </div>
         </div>
 
-        {extracting && <div style={{ display: "flex", alignItems: "center", gap: 10, backgroundColor: "#f8fafc", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}><span style={{ color: "#64748b", fontSize: 13 }}>Running extraction...</span></div>}
+        {extracting && <div style={{ display: "flex", alignItems: "center", gap: 10, backgroundColor: "#f8fafc", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}><span style={{ color: "#64748b", fontSize: 13 }}>Processing document...</span></div>}
         {error    && <div style={{ backgroundColor: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 14, marginBottom: 12 }}>{error}</div>}
         {submitted && <div style={{ backgroundColor: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: "10px 12px", color: "#065f46", fontSize: 14, marginBottom: 12 }}>Submitted - awaiting Reviewer approval (Step 1 of 3)</div>}
 
@@ -863,7 +871,7 @@ function Upload({ user, docs, onUpdate }) {
           <div className="extraction-console" style={{ borderTop: "1px solid #f3f4f6", marginTop: 16, paddingTop: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
               <p style={{ fontWeight: 800, fontSize: 16, color: NAVY, margin: 0 }}>Extracted data</p>
-              <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>Review & correct if needed</p>
+              <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>Review and confirm details</p>
             </div>
 
             {extractionMeta && (
@@ -878,7 +886,7 @@ function Upload({ user, docs, onUpdate }) {
 
             {dup?.dup && (
               <div style={{ backgroundColor: "#fff8f1", border: "1px solid #fdba74", borderRadius: 10, padding: 14, marginBottom: 16 }}>
-                <p style={{ fontWeight: 700, color: "#9a3412", fontSize: 14, margin: "0 0 4px" }}>Possible duplicate</p>
+                <p style={{ fontWeight: 700, color: "#9a3412", fontSize: 14, margin: "0 0 4px" }}>Possible duplicate found</p>
                 <p style={{ color: "#9a3412", fontSize: 13, margin: "0 0 12px" }}>{dup.reason}</p>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: "#7c2d12", fontWeight: 600 }}>
                   <input type="checkbox" checked={override} onChange={e => setOverride(e.target.checked)} style={{ width: 16, height: 16, accentColor: "#ea580c" }} />
@@ -923,7 +931,7 @@ function Upload({ user, docs, onUpdate }) {
 /* ================================================================
    DOC CARD
 ================================================================ */
-function DocCard({ d, canAct, comments, setComments, busyId, onDecision }) {
+function DocCard({ d, canAct, comments, setComments, busyId, busyAction, onDecision }) {
   const [expanded, setExpanded] = useState(canAct);
   const [confirmReject, setConfirmReject] = useState(false);
   return (
@@ -974,12 +982,12 @@ function DocCard({ d, canAct, comments, setComments, busyId, onDecision }) {
             style={{ width: "100%", border: "1px solid #cfd8e3", borderRadius: 8, padding: "9px 11px", fontSize: 13, outline: "none", boxSizing: "border-box", backgroundColor: "#fff", marginBottom: 10 }} />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => onDecision(d, "approve")} disabled={busyId === d.id}
-              style={{ width: 112, padding: "8px 12px", borderRadius: 8, border: "none", backgroundColor: "#047857", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: busyId === d.id ? 0.6 : 1 }}>
-              {busyId === d.id ? "..." : "Approve"}
+              style={{ width: 124, padding: "8px 12px", borderRadius: 8, border: "none", backgroundColor: "#047857", color: "#fff", fontWeight: 700, fontSize: 13, cursor: busyId === d.id ? "wait" : "pointer", opacity: busyId === d.id ? 0.6 : 1 }}>
+              {busyId === d.id && busyAction === "approve" ? "Approving..." : "Approve"}
             </button>
             <button onClick={() => confirmReject ? onDecision(d, "reject") : setConfirmReject(true)} disabled={busyId === d.id || !comments[d.id]?.trim()}
-              style={{ width: 112, padding: "8px 12px", borderRadius: 8, border: "1px solid #fecaca", backgroundColor: "#fff", color: "#b91c1c", fontWeight: 700, fontSize: 13, cursor: (busyId === d.id || !comments[d.id]?.trim()) ? "not-allowed" : "pointer", opacity: (busyId === d.id || !comments[d.id]?.trim()) ? 0.45 : 1 }}>
-              {confirmReject ? "Confirm" : "Reject"}
+              style={{ width: 124, padding: "8px 12px", borderRadius: 8, border: "1px solid #fecaca", backgroundColor: "#fff", color: "#b91c1c", fontWeight: 700, fontSize: 13, cursor: (busyId === d.id || !comments[d.id]?.trim()) ? "not-allowed" : "pointer", opacity: (busyId === d.id || !comments[d.id]?.trim()) ? 0.45 : 1 }}>
+              {busyId === d.id && busyAction === "reject" ? "Rejecting..." : confirmReject ? "Confirm" : "Reject"}
             </button>
           </div>
           {!comments[d.id]?.trim() && <p style={{ textAlign: "right", fontSize: 11, color: "#94a3b8", margin: "6px 0 0" }}>Add a comment to enable rejection</p>}
@@ -994,6 +1002,7 @@ function DocCard({ d, canAct, comments, setComments, busyId, onDecision }) {
 ================================================================ */
 function Approvals({ user, docs, onUpdate }) {
   const [busyId,   setBusyId]   = useState(null);
+  const [busyAction, setBusyAction] = useState(null);
   const [comments, setComments] = useState({});
   const [error,    setError]    = useState("");
 
@@ -1017,12 +1026,12 @@ function Approvals({ user, docs, onUpdate }) {
   async function decide(doc, action) {
     const step = stepOf(doc.status);
     if (!step || (action === "reject" && !comments[doc.id]?.trim())) return;
-    setBusyId(doc.id); setError("");
+    setBusyId(doc.id); setBusyAction(action); setError("");
     try {
       const token = localStorage.getItem("token");
       if (token) {
         const res = await fetch(apiUrl(`/api/docs/${doc.id}/decide`), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ action, comment: comments[doc.id] || "" }) });
-        await readApiJson(res, "Save failed");
+        await readApiJson(res, "The decision could not be saved. Please try again.");
         const j = await fetchServerDocs(token); setStore(j); onUpdate(j);
       } else {
         const entry = { step, approverName: user.name, approverRole: user.stepLabel || user.role, action, comment: comments[doc.id] || "", timestamp: new Date().toISOString() };
@@ -1034,14 +1043,14 @@ function Approvals({ user, docs, onUpdate }) {
         setStore(updated); onUpdate(updated);
       }
       setComments(c => { const n = { ...c }; delete n[doc.id]; return n; });
-    } catch (e) { setError("Save failed: " + e.message); }
-    finally { setBusyId(null); }
+    } catch (e) { setError("The decision could not be saved. Please try again."); }
+    finally { setBusyId(null); setBusyAction(null); }
   }
 
   const renderSection = (title, items, act) => items.length === 0 ? null : (
     <div style={{ marginBottom: 24 }}>
       <p style={{ fontSize: 13, fontWeight: 700, color: "#64748b", margin: "0 0 10px" }}>{title} ({items.length})</p>
-      {items.map(d => <DocCard key={d.id} d={d} canAct={act} comments={comments} setComments={setComments} busyId={busyId} onDecision={decide} />)}
+      {items.map(d => <DocCard key={d.id} d={d} canAct={act} comments={comments} setComments={setComments} busyId={busyId} busyAction={busyAction} onDecision={decide} />)}
     </div>
   );
 
@@ -1072,6 +1081,7 @@ function Reports({ docs, user, onUpdate }) {
   const [minA, setMinA] = useState(""); const [maxA, setMaxA] = useState("");
   const [tab,  setTab]  = useState("spend");
   const [delId,setDelId]= useState(null);
+  const [exporting, setExporting] = useState("");
 
   const rows = docs.filter(d => {
     const amt  = Number(d.extracted?.total_amount) || 0;
@@ -1095,7 +1105,10 @@ function Reports({ docs, user, onUpdate }) {
   const byVendor = {};
   rows.forEach(d => { const v = d.extracted?.vendor_name || "Unknown"; byVendor[v] = (byVendor[v] || 0) + (Number(d.extracted?.total_amount) || 0); });
 
-  function exportXlsx() {
+  async function exportXlsx() {
+    if (exporting) return;
+    setExporting("excel");
+    await new Promise(requestAnimationFrame);
     const data = rows.map(d => ({
       "Type": d.type === "invoice" ? "Invoice" : "Credit Note", "File": d.fileName,
       "Vendor": d.extracted?.vendor_name || "", "Invoice #": d.extracted?.invoice_number || "",
@@ -1109,6 +1122,16 @@ function Reports({ docs, user, onUpdate }) {
     const ws = XLSX.utils.json_to_sheet(data), wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Report");
     XLSX.writeFile(wb, "docflow-report.xlsx");
+    setTimeout(() => setExporting(""), 250);
+  }
+
+  function exportPdf() {
+    if (exporting) return;
+    setExporting("pdf");
+    setTimeout(() => {
+      window.print();
+      setExporting("");
+    }, 100);
   }
 
   async function del(id) {
@@ -1118,19 +1141,18 @@ function Reports({ docs, user, onUpdate }) {
       const token = localStorage.getItem("token");
       if (token) {
         const res = await fetch(apiUrl(`/api/docs/${id}`), { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-        await readApiJson(res, "Delete failed");
+        await readApiJson(res, "The document could not be deleted. Please try again.");
         const j = await fetchServerDocs(token); setStore(j); onUpdate(j);
       } else {
         const updated = docs.filter(d => d.id !== id);
         setStore(updated); onUpdate(updated);
       }
     } catch (e) {
-      alert("Delete failed: " + e.message);
+      alert("The document could not be deleted. Please try again.");
     } finally { setDelId(null); }
   }
 
   const sel = { width: "100%", border: "1.5px solid #e5e7eb", borderRadius: 10, padding: "9px 12px", fontSize: 13, outline: "none", backgroundColor: "#f9fafb", boxSizing: "border-box" };
-  const F = ({ l, children }) => <div><p style={{ fontSize: 12, fontWeight: 700, color: "#64748b", margin: "0 0 5px" }}>{l}</p>{children}</div>;
   const TABS = [{ key: "spend", label: "Spend" }, { key: "vendor", label: "Vendors" }, { key: "vat", label: "VAT" }, { key: "list", label: "Documents" }];
 
   return (
@@ -1147,20 +1169,20 @@ function Reports({ docs, user, onUpdate }) {
             <p style={{ color: "#9ca3af", fontSize: 13, margin: "2px 0 0" }}>{rows.length} document{rows.length !== 1 ? "s" : ""} match filters</p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={exportXlsx} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", backgroundColor: NAVY, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}><ExportIcon type="excel" />Excel</button>
-            <button onClick={() => window.print()} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: `1.5px solid ${NAVY}`, backgroundColor: "#fff", color: NAVY, fontWeight: 700, fontSize: 13, cursor: "pointer" }}><ExportIcon type="pdf" />PDF</button>
+            <button onClick={exportXlsx} disabled={!!exporting} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", backgroundColor: NAVY, color: "#fff", fontWeight: 700, fontSize: 13, cursor: exporting ? "wait" : "pointer", opacity: exporting ? 0.7 : 1 }}><ExportIcon type="excel" />{exporting === "excel" ? "Exporting..." : "Excel"}</button>
+            <button onClick={exportPdf} disabled={!!exporting} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: `1.5px solid ${NAVY}`, backgroundColor: "#fff", color: NAVY, fontWeight: 700, fontSize: 13, cursor: exporting ? "wait" : "pointer", opacity: exporting ? 0.7 : 1 }}><ExportIcon type="pdf" />{exporting === "pdf" ? "Exporting..." : "PDF"}</button>
           </div>
         </div>
 
         <div className="filter-panel premium-card" style={{ backgroundColor: "#fff", borderRadius: 16, padding: 16, border: "1px solid #f3f4f6", marginBottom: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10 }}>
-            <F l="From"><input type="date" value={from} onChange={e => setFrom(e.target.value)} style={sel} /></F>
-            <F l="To"><input type="date" value={to} onChange={e => setTo(e.target.value)} style={sel} /></F>
-            <div style={{ gridColumn: "1/-1" }}><F l="Vendor"><input value={vend} onChange={e => setVend(e.target.value)} placeholder="Search…" style={sel} /></F></div>
-            <F l="Status"><select value={stat} onChange={e => setStat(e.target.value)} style={sel}><option value="all">All</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></F>
-            <F l="Type"><select value={type} onChange={e => setType(e.target.value)} style={sel}><option value="all">All</option><option value="invoice">Invoices</option><option value="credit_note">Credit Notes</option></select></F>
-            <F l="Min amount"><input type="number" value={minA} onChange={e => setMinA(e.target.value)} style={sel} /></F>
-            <F l="Max amount"><input type="number" value={maxA} onChange={e => setMaxA(e.target.value)} style={sel} /></F>
+            <FilterField label="From"><input type="date" value={from} onChange={e => setFrom(e.target.value)} style={sel} /></FilterField>
+            <FilterField label="To"><input type="date" value={to} onChange={e => setTo(e.target.value)} style={sel} /></FilterField>
+            <div style={{ gridColumn: "1/-1" }}><FilterField label="Vendor"><input value={vend} onChange={e => setVend(e.target.value)} placeholder="Search…" style={sel} /></FilterField></div>
+            <FilterField label="Status"><select value={stat} onChange={e => setStat(e.target.value)} style={sel}><option value="all">All</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></FilterField>
+            <FilterField label="Type"><select value={type} onChange={e => setType(e.target.value)} style={sel}><option value="all">All</option><option value="invoice">Invoices</option><option value="credit_note">Credit Notes</option></select></FilterField>
+            <FilterField label="Min amount"><input type="number" value={minA} onChange={e => setMinA(e.target.value)} style={sel} /></FilterField>
+            <FilterField label="Max amount"><input type="number" value={maxA} onChange={e => setMaxA(e.target.value)} style={sel} /></FilterField>
           </div>
         </div>
 
@@ -1215,7 +1237,7 @@ function Reports({ docs, user, onUpdate }) {
       {tab === "vendor" && <div style={{ backgroundColor: "#fff", borderRadius: 16, padding: 16, border: "1px solid #f3f4f6" }}>
         <p style={{ fontWeight: 800, color: NAVY, fontSize: 14, margin: "0 0 16px" }}>Spend by vendor</p>
         {Object.keys(byVendor).length === 0
-          ? <p style={{ color: "#9ca3af", textAlign: "center", padding: 24 }}>No data.</p>
+          ? <p style={{ color: "#9ca3af", textAlign: "center", padding: 24 }}>No records match the selected filters.</p>
           : Object.entries(byVendor).sort((a, b) => b[1] - a[1]).map(([v, amt]) => {
               const pct = total > 0 ? (amt / total) * 100 : 0;
               return <div key={v} style={{ marginBottom: 16 }}>
@@ -1243,7 +1265,7 @@ function Reports({ docs, user, onUpdate }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead><tr style={{ borderBottom: "2px solid #f3f4f6" }}>{["Vendor", "Inv #", "Date", "Excl", "VAT", "Total"].map(h => <th key={h} style={{ padding: "10px 12px", textAlign: "left", color: "#9ca3af", fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
             <tbody>
-              {rows.length === 0 ? <tr><td colSpan="6" style={{ padding: 24, textAlign: "center", color: "#9ca3af" }}>No documents.</td></tr>
+              {rows.length === 0 ? <tr><td colSpan="6" style={{ padding: 24, textAlign: "center", color: "#9ca3af" }}>No records match the selected filters.</td></tr>
                 : rows.map(d => { const t = Number(d.extracted?.total_amount) || 0, v = Number(d.extracted?.vat_amount) || 0;
                     return <tr key={d.id} style={{ borderBottom: "1px solid #f9fafb" }}>
                       <td style={{ padding: "10px 12px", fontWeight: 600 }}>{d.extracted?.vendor_name || "—"}</td>
@@ -1261,7 +1283,7 @@ function Reports({ docs, user, onUpdate }) {
 
       {/* LIST */}
       {tab === "list" && <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {rows.length === 0 ? <p style={{ textAlign: "center", color: "#9ca3af", padding: 32 }}>No documents match.</p>
+        {rows.length === 0 ? <p style={{ textAlign: "center", color: "#9ca3af", padding: 32 }}>No records match the selected filters.</p>
           : rows.map(d => (
               <div key={d.id} style={{ backgroundColor: "#fff", borderRadius: 14, padding: 14, border: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ minWidth: 0 }}>
@@ -1292,7 +1314,7 @@ function Insights({ docs }) {
   async function generate() {
     setLoading(true); setError("");
     try { setInsights(await aiInsights(docs)); }
-    catch (e) { setError("Failed: " + e.message); }
+    catch (e) { setError("Insights could not be generated. Please try again."); }
     finally { setLoading(false); }
   }
 
@@ -1300,21 +1322,21 @@ function Insights({ docs }) {
     <div className="page-shell page-enter insights-page">
       <div className="page-header">
         <h2>Spend Insights</h2>
-        <p>Based on submitted documents. Insights use observed records and rule-based fallback when AI is unavailable.</p>
+        <p>Insights are based on the submitted document records.</p>
       </div>
       <h2 style={{ display: "none" }}>Spend Insights</h2>
       <p style={{ color: "#9ca3af", fontSize: 13, margin: "0 0 20px" }}>Spending trends, anomalies & patterns · {docs.length} document{docs.length !== 1 ? "s" : ""}</p>
 
       {docs.length === 0
-        ? <div style={{ backgroundColor: "#fff", borderRadius: 10, padding: 32, textAlign: "center", border: "1px solid #e5e7eb" }}><p style={{ color: "#64748b", fontSize: 14, margin: 0 }}>Upload documents first.</p></div>
+        ? <div style={{ backgroundColor: "#fff", borderRadius: 10, padding: 32, textAlign: "center", border: "1px solid #e5e7eb" }}><p style={{ color: "#64748b", fontSize: 14, margin: 0 }}>No submitted documents are available for insights yet.</p></div>
         : <>
             <div className="insight-toolbar">
               <span>{docs.length} submitted document{docs.length !== 1 ? "s" : ""}</span>
-              <span>Current records only</span>
+              <span>Submitted records</span>
             </div>
             <button className="primary-action" onClick={generate} disabled={loading}
               style={{ padding: "10px 16px", borderRadius: 8, border: "none", backgroundColor: NAVY, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: loading ? 0.7 : 1, marginBottom: 16, width: "auto" }}>
-              {loading ? "Analyzing..." : insights ? "Regenerate Insights" : "Generate Insights"}
+              {loading ? "Generating insights..." : insights ? "Regenerate Insights" : "Generate Insights"}
             </button>
             {error && <div style={{ backgroundColor: "#fee2e2", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 14, marginBottom: 16 }}>{error}</div>}
             {loading && [1, 2, 3, 4, 5].map(i => (
@@ -1390,7 +1412,7 @@ export default function App() {
       localStorage.setItem("token", j.token);
       setStore(serverDocs); setDocs(serverDocs);
       setUser(j.user); setView(defaultViewForUser(j.user));
-    } catch (e) { setLoginErr(e.message || "Login failed"); }
+    } catch (e) { setLoginErr(e.message || "Unable to sign in. Please check your credentials and try again."); }
     finally { setLoginLoad(false); }
   }
 
