@@ -7,6 +7,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 ================================================================ */
 const NAVY = "#0B1E3D";
 const GOLD = "#C9A227";
+const REPORT_LOGO_SRC = "/pcg-mindrift-report-logo.png";
 
 // ── API base: uses env var in production, falls back to relative /api path in dev ──
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -342,18 +343,94 @@ function isPositiveAmountClient(value) {
   return Number.isFinite(n) && n > 0;
 }
 
-function downloadExcelWorkbook(wb, filename) {
+async function loadReportLogoBytes() {
+  try {
+    const res = await fetch(REPORT_LOGO_SRC, { cache: "no-store" });
+    if (!res.ok) throw new Error("Report logo unavailable");
+    return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+function addReportLogoToWorkbookZip(zip, logoBytes) {
+  const sheetPath = "xl/worksheets/sheet1.xml";
+  const contentPath = "[Content_Types].xml";
+  const sheetRelPath = "xl/worksheets/_rels/sheet1.xml.rels";
+  const drawingPath = "xl/drawings/drawing1.xml";
+  const drawingRelPath = "xl/drawings/_rels/drawing1.xml.rels";
+  const mediaPath = "xl/media/pcg-mindrift-report-logo.png";
+  if (!zip[sheetPath] || !zip[contentPath] || !logoBytes?.length) return false;
+
+  let sheetXml = strFromU8(zip[sheetPath]);
+  if (!sheetXml.includes("xmlns:r=")) {
+    sheetXml = sheetXml.replace("<worksheet ", '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
+  }
+
+  let relXml = zip[sheetRelPath]
+    ? strFromU8(zip[sheetRelPath])
+    : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  const ids = [...relXml.matchAll(/Id="rId(\d+)"/g)].map(m => Number(m[1]));
+  const drawingRelId = `rId${Math.max(0, ...ids) + 1}`;
+  if (!relXml.includes('Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"')) {
+    relXml = relXml.replace("</Relationships>", `<Relationship Id="${drawingRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>`);
+    zip[sheetRelPath] = strToU8(relXml);
+  }
+  if (!sheetXml.includes("<drawing ")) {
+    sheetXml = sheetXml.replace("</worksheet>", `<drawing r:id="${drawingRelId}"/></worksheet>`);
+    zip[sheetPath] = strToU8(sheetXml);
+  }
+
+  const logoWidthPx = 330;
+  const logoHeightPx = Math.round(logoWidthPx * 721 / 1013);
+  const emu = 9525;
+  zip[drawingPath] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:oneCellAnchor>
+    <xdr:from><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+    <xdr:ext cx="${logoWidthPx * emu}" cy="${logoHeightPx * emu}"/>
+    <xdr:pic>
+      <xdr:nvPicPr><xdr:cNvPr id="2" name="PCG MindRift report logo"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>
+      <xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>
+      <xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${logoWidthPx * emu}" cy="${logoHeightPx * emu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>
+    </xdr:pic>
+    <xdr:clientData/>
+  </xdr:oneCellAnchor>
+</xdr:wsDr>`);
+  zip[drawingRelPath] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/pcg-mindrift-report-logo.png"/>
+</Relationships>`);
+  zip[mediaPath] = logoBytes;
+
+  let contentXml = strFromU8(zip[contentPath]);
+  if (!contentXml.includes('Extension="png"')) {
+    contentXml = contentXml.includes("<Override ")
+      ? contentXml.replace("<Override ", '<Default Extension="png" ContentType="image/png"/><Override ')
+      : contentXml.replace("</Types>", '<Default Extension="png" ContentType="image/png"/></Types>');
+  }
+  if (!contentXml.includes('/xl/drawings/drawing1.xml')) {
+    contentXml = contentXml.replace("</Types>", '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>');
+  }
+  zip[contentPath] = strToU8(contentXml);
+  return true;
+}
+
+function downloadExcelWorkbook(wb, filename, options = {}) {
   const workbookBytes = new Uint8Array(XLSX.write(wb, { bookType: "xlsx", type: "array", cellStyles: true }));
   const zip = unzipSync(workbookBytes);
   const sheetPath = "xl/worksheets/sheet1.xml";
   if (zip[sheetPath]) {
-    const pane = '<pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A4" sqref="A4"/>';
+    const freezeRows = options.freezeRows || 3;
+    const topLeftCell = options.topLeftCell || "A4";
+    const pane = `<pane ySplit="${freezeRows}" topLeftCell="${topLeftCell}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="${topLeftCell}" sqref="${topLeftCell}"/>`;
     const xml = strFromU8(zip[sheetPath]);
     const patched = xml.includes("<pane ")
       ? xml
       : xml.replace(/<sheetView([^>]*)\/>/, `<sheetView$1>${pane}</sheetView>`);
     zip[sheetPath] = strToU8(patched);
   }
+  if (options.logoBytes) addReportLogoToWorkbookZip(zip, options.logoBytes);
   const blob = new Blob([zipSync(zip)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1183,8 +1260,12 @@ function Reports({ docs, user, onUpdate }) {
     });
 
     const generatedAt = new Date();
+    const logoBytes = await loadReportLogoBytes();
+    const hasLogo = Boolean(logoBytes?.length);
     const aoa = [
-      ["DocFlow AI Report"],
+      [hasLogo ? "" : "PCG | MindRift"],
+      [""],
+      [""],
       [`Generated: ${generatedAt.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })}`, "", "", "", "", "", "", "", `Records: ${rows.length}`],
       headers,
       ...dataRows,
@@ -1192,8 +1273,10 @@ function Reports({ docs, user, onUpdate }) {
     const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true }), wb = XLSX.utils.book_new();
     const lastRow = aoa.length;
     const lastCol = headers.length - 1;
-    const tableRef = XLSX.utils.encode_range({ s: { r: 2, c: 0 }, e: { r: Math.max(2, lastRow - 1), c: lastCol } });
-    const fullRef = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(2, lastRow - 1), c: lastCol } });
+    const headerRowIndex = 4;
+    const dataStartIndex = headerRowIndex + 1;
+    const tableRef = XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: Math.max(headerRowIndex, lastRow - 1), c: lastCol } });
+    const fullRef = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(headerRowIndex, lastRow - 1), c: lastCol } });
     const border = {
       top: { style: "thin", color: { rgb: "DBE3EE" } },
       right: { style: "thin", color: { rgb: "DBE3EE" } },
@@ -1214,9 +1297,9 @@ function Reports({ docs, user, onUpdate }) {
 
     ws["!ref"] = fullRef;
     ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
-      { s: { r: 1, c: 8 }, e: { r: 1, c: lastCol } },
+      { s: { r: 0, c: 0 }, e: { r: 2, c: lastCol } },
+      { s: { r: 3, c: 0 }, e: { r: 3, c: 7 } },
+      { s: { r: 3, c: 8 }, e: { r: 3, c: lastCol } },
     ];
     ws["!cols"] = [
       { wch: 14 }, { wch: 30 }, { wch: 34 }, { wch: 22 }, { wch: 14 },
@@ -1224,29 +1307,31 @@ function Reports({ docs, user, onUpdate }) {
       { wch: 18 }, { wch: 14 }, { wch: 46 },
     ];
     ws["!rows"] = [
-      { hpt: 26 },
+      { hpt: 58 },
+      { hpt: 58 },
+      { hpt: 58 },
       { hpt: 19 },
       { hpt: 24 },
       ...dataRows.map(row => ({ hpt: String(row[12] || "").length > 35 ? 34 : 23 })),
     ];
     ws["!autofilter"] = { ref: tableRef };
-    ws["!freeze"] = { xSplit: 0, ySplit: 3, topLeftCell: "A4", activePane: "bottomLeft", state: "frozen" };
+    ws["!freeze"] = { xSplit: 0, ySplit: 5, topLeftCell: "A6", activePane: "bottomLeft", state: "frozen" };
 
-    ws.A1.s = {
+    if (!hasLogo) ws.A1.s = {
       font: { name: "Aptos Display", sz: 18, bold: true, color: { rgb: "0B1E3D" } },
       alignment: { vertical: "center" },
     };
-    ws.A2.s = {
+    ws.A4.s = {
       font: { name: "Aptos", sz: 10, color: { rgb: "64748B" } },
       alignment: { vertical: "center" },
     };
-    ws.I2.s = {
+    ws.I4.s = {
       font: { name: "Aptos", sz: 10, bold: true, color: { rgb: "0B1E3D" } },
       alignment: { horizontal: "right", vertical: "center" },
     };
 
     for (let c = 0; c <= lastCol; c += 1) {
-      const addr = XLSX.utils.encode_cell({ r: 2, c });
+      const addr = XLSX.utils.encode_cell({ r: headerRowIndex, c });
       ws[addr].s = {
         font: { name: "Aptos", sz: 10, bold: true, color: { rgb: "FFFFFF" } },
         fill: { fgColor: { rgb: "0B1E3D" } },
@@ -1256,7 +1341,7 @@ function Reports({ docs, user, onUpdate }) {
     }
 
     dataRows.forEach((row, idx) => {
-      const r = idx + 3;
+      const r = idx + dataStartIndex;
       const statusText = String(row[8] || "").toLowerCase();
       const statusStyle = statusText.includes("approved")
         ? statusStyles.approved
@@ -1279,13 +1364,13 @@ function Reports({ docs, user, onUpdate }) {
     });
 
     wb.Props = {
-      Title: "DocFlow AI Report",
+      Title: "PCG | MindRift Report",
       Subject: "Filtered document report",
-      Author: "DocFlow AI",
+      Author: "PCG | MindRift",
       CreatedDate: generatedAt,
     };
     XLSX.utils.book_append_sheet(wb, ws, "Report");
-    downloadExcelWorkbook(wb, "docflow-report.xlsx");
+    downloadExcelWorkbook(wb, "docflow-report.xlsx", { logoBytes, freezeRows: 5, topLeftCell: "A6" });
     setTimeout(() => setExporting(""), 250);
   }
 
@@ -1380,22 +1465,21 @@ function Reports({ docs, user, onUpdate }) {
             line-height: 1.35;
           }
           body.printing-report .report-export-header {
-            display: flex;
-            justify-content: space-between;
-            gap: 16px;
-            align-items: flex-start;
-            padding-bottom: 12px;
+            display: block;
+            text-align: center;
+            padding-bottom: 14px;
             border-bottom: 1px solid #dbe3ee;
-            margin-bottom: 12px;
+            margin-bottom: 14px;
             break-inside: avoid;
             page-break-inside: avoid;
           }
-          body.printing-report .report-export-title {
-            margin: 0;
-            color: #0B1E3D !important;
-            font-size: 21px;
-            line-height: 1.2;
-            letter-spacing: -0.01em;
+          body.printing-report .report-export-logo {
+            display: block;
+            width: 245px;
+            max-width: 48%;
+            height: auto;
+            margin: 0 auto 10px;
+            border-radius: 4px;
           }
           body.printing-report .report-export-subtitle,
           body.printing-report .report-export-meta {
@@ -1550,12 +1634,10 @@ function Reports({ docs, user, onUpdate }) {
         </div>
       </div>
 
-      <section className="report-export-content" aria-label="DocFlow AI PDF report">
+      <section className="report-export-content" aria-label="PCG MindRift PDF report">
         <div className="report-export-header">
-          <div>
-            <h1 className="report-export-title">DocFlow AI Report</h1>
-            <p className="report-export-subtitle">{rows.length} document{rows.length !== 1 ? "s" : ""} matching current report filters</p>
-          </div>
+          <img className="report-export-logo" src={REPORT_LOGO_SRC} alt="PCG | MindRift" />
+          <p className="report-export-subtitle">{rows.length} document{rows.length !== 1 ? "s" : ""} matching current report filters</p>
           <p className="report-export-meta">Generated {new Date().toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })}</p>
         </div>
 
