@@ -25,33 +25,124 @@ const DEMO_USERS = [
   { username: "viewer", password: "viewer123", role: "viewer", display_name: "Priya Pillay", approval_step: null, step_label: null },
 ];
 
+const STEP_LABELS = { 1: "Reviewer", 2: "Manager", 3: "Finance/Admin" };
+const APPROVER_BY_STAGE = { 1: "reviewer", 2: "manager", 3: "finance" };
+
 const DEMO_DOCS = [
   {
     document_type: "invoice",
     vendor: "Takealot Online (Pty) Ltd",
-    invoice_number: "TAK-2024-0341",
-    invoice_date: "2024-11-15",
-    amount: 12540,
-    vat: 1632.17,
-    file_name: "takealot-inv-0341.pdf",
+    invoice_number: "TAK-2026-1048",
+    invoice_date: "2026-01-14",
+    amount: 18420.00,
+    vat: 2402.61,
+    status: "pending_approval_1",
+    current_step: 1,
+    file_name: "takealot-inv-1048.pdf",
+    approvals: [],
   },
   {
     document_type: "invoice",
     vendor: "MTN South Africa",
-    invoice_number: "MTN-INV-98234",
-    invoice_date: "2024-11-28",
-    amount: 3899,
-    vat: 507.52,
-    file_name: "mtn-invoice-nov24.pdf",
+    invoice_number: "MTN-INV-2026-2217",
+    invoice_date: "2026-02-03",
+    amount: 7850.50,
+    vat: 1023.98,
+    status: "pending_approval_1",
+    current_step: 1,
+    file_name: "mtn-invoice-2217.pdf",
+    approvals: [],
+  },
+  {
+    document_type: "invoice",
+    vendor: "Vodacom (Pty) Ltd",
+    invoice_number: "VOD-INV-2026-3182",
+    invoice_date: "2026-02-21",
+    amount: 11275.00,
+    vat: 1470.65,
+    status: "pending_approval_2",
+    current_step: 2,
+    file_name: "vodacom-inv-3182.pdf",
+    approvals: [
+      { stage: 1, action: "approve", comment: "Reviewer details confirmed.", created_at: "2026-02-22T09:15:00.000Z" },
+    ],
+  },
+  {
+    document_type: "invoice",
+    vendor: "Makro Retail (Pty) Ltd",
+    invoice_number: "MAK-INV-2026-4410",
+    invoice_date: "2026-03-06",
+    amount: 29999.99,
+    vat: 3913.04,
+    status: "pending_approval_3",
+    current_step: 3,
+    file_name: "makro-inv-4410.pdf",
+    approvals: [
+      { stage: 1, action: "approve", comment: "Reviewer details confirmed.", created_at: "2026-03-07T08:30:00.000Z" },
+      { stage: 2, action: "approve", comment: "Manager approval recorded.", created_at: "2026-03-08T10:20:00.000Z" },
+    ],
+  },
+  {
+    document_type: "invoice",
+    vendor: "Sanlam",
+    invoice_number: "SAN-INV-2026-0927",
+    invoice_date: "2026-03-18",
+    amount: 42350.75,
+    vat: 5524.01,
+    status: "approved",
+    current_step: null,
+    file_name: "sanlam-inv-0927.pdf",
+    approvals: [
+      { stage: 1, action: "approve", comment: "Reviewer details confirmed.", created_at: "2026-03-19T09:00:00.000Z" },
+      { stage: 2, action: "approve", comment: "Manager approval recorded.", created_at: "2026-03-20T11:30:00.000Z" },
+      { stage: 3, action: "approve", comment: "Final finance approval recorded.", created_at: "2026-03-21T14:05:00.000Z" },
+    ],
   },
   {
     document_type: "credit_note",
-    vendor: "Makro Retail (Pty) Ltd",
-    invoice_number: "CN-MAKRO-0021",
-    invoice_date: "2024-12-03",
-    amount: 7200,
-    vat: 937.24,
-    file_name: "makro-cn0021.pdf",
+    vendor: "Discovery Health",
+    invoice_number: "CN-DISC-2026-018",
+    invoice_date: "2026-04-02",
+    amount: 3450.00,
+    vat: 450.00,
+    status: "pending_approval_2",
+    current_step: 2,
+    file_name: "discovery-credit-018.pdf",
+    approvals: [
+      { stage: 1, action: "approve", comment: "Reviewer details confirmed.", created_at: "2026-04-03T09:45:00.000Z" },
+    ],
+  },
+  {
+    document_type: "credit_note",
+    vendor: "Shoprite Checkers",
+    invoice_number: "CN-SHP-2026-204",
+    invoice_date: "2026-04-16",
+    amount: 8990.00,
+    vat: 1172.61,
+    status: "approved",
+    current_step: null,
+    file_name: "shoprite-credit-204.pdf",
+    approvals: [
+      { stage: 1, action: "approve", comment: "Reviewer details confirmed.", created_at: "2026-04-17T08:50:00.000Z" },
+      { stage: 2, action: "approve", comment: "Manager approval recorded.", created_at: "2026-04-18T10:10:00.000Z" },
+      { stage: 3, action: "approve", comment: "Final finance approval recorded.", created_at: "2026-04-19T15:25:00.000Z" },
+    ],
+  },
+  {
+    document_type: "credit_note",
+    vendor: "Standard Bank",
+    invoice_number: "CN-STB-2026-077",
+    invoice_date: "2026-05-07",
+    amount: 5750.25,
+    vat: 750.03,
+    status: "rejected",
+    current_step: null,
+    file_name: "standard-bank-credit-077.pdf",
+    approvals: [
+      { stage: 1, action: "approve", comment: "Reviewer details confirmed.", created_at: "2026-05-08T09:20:00.000Z" },
+      { stage: 2, action: "approve", comment: "Manager approval recorded.", created_at: "2026-05-09T12:00:00.000Z" },
+      { stage: 3, action: "reject", comment: "Credit note value requires revised supporting documentation.", created_at: "2026-05-10T13:35:00.000Z" },
+    ],
   },
 ];
 
@@ -75,7 +166,7 @@ async function upsertDemoUsers() {
   return Object.fromEntries(data.map((row) => [row.username, row.id]));
 }
 
-async function seedDemoDocuments(adminId) {
+async function seedDemoDocuments(adminId, userIds) {
   for (const doc of DEMO_DOCS) {
     const existing = await supabase
       .from("documents")
@@ -88,26 +179,68 @@ async function seedDemoDocuments(adminId) {
       continue;
     }
 
-    const { error } = await supabase.from("documents").insert({
-      ...doc,
-      status: "pending_approval_1",
-      current_step: 1,
+    const { approvals, ...docRow } = doc;
+    const { data, error } = await supabase.from("documents").insert({
+      ...docRow,
       file_type: "application/pdf",
       file_hash: `seed-${doc.invoice_number.toLowerCase()}`,
-      extraction_method: "seeded_demo",
+      duplicate_status: null,
+      duplicate_reason: null,
+      extraction_method: "sample_document",
       extraction_confidence: 1,
-      extraction_notes: "Seeded demo document for recruiter testing.",
+      extraction_notes: "Sample document details loaded for reviewer testing.",
       uploaded_by: adminId,
-    });
+      created_at: `${doc.invoice_date}T08:00:00.000Z`,
+    }).select("id").single();
     if (error) throw error;
+
+    if (approvals?.length) {
+      const historyRows = approvals.map((entry) => ({
+        document_id: data.id,
+        stage: entry.stage,
+        role: STEP_LABELS[entry.stage],
+        action: entry.action,
+        user_id: userIds[APPROVER_BY_STAGE[entry.stage]],
+        comment: entry.comment,
+        created_at: entry.created_at,
+      }));
+      const historyResult = await supabase.from("approval_history").insert(historyRows);
+      if (historyResult.error) throw historyResult.error;
+    }
     console.log(`Seeded demo document ${doc.invoice_number}.`);
   }
 }
 
+async function resetDemoDocumentData() {
+  if (process.env.RESET_DEMO_DATA !== "1") {
+    throw new Error("Refusing to reset demo data. Set RESET_DEMO_DATA=1 to confirm document reset.");
+  }
+
+  const url = new URL(SUPABASE_URL);
+  const docsResult = await supabase.from("documents").select("id");
+  if (docsResult.error) throw docsResult.error;
+  const historyResult = await supabase.from("approval_history").select("id");
+  if (historyResult.error) throw historyResult.error;
+
+  const nil = "00000000-0000-0000-0000-000000000000";
+  const deleteHistory = await supabase.from("approval_history").delete().neq("id", nil);
+  if (deleteHistory.error) throw deleteHistory.error;
+  const deleteDocs = await supabase.from("documents").delete().neq("id", nil);
+  if (deleteDocs.error) throw deleteDocs.error;
+
+  console.log(`Reset target: ${url.hostname}`);
+  console.log(`Removed ${docsResult.data.length} document record(s) and ${historyResult.data.length} approval history record(s).`);
+}
+
 (async () => {
+  const resetDocs = process.argv.includes("--reset-demo-docs");
+  const seedDocs = resetDocs || process.argv.includes("--with-docs");
   const users = await upsertDemoUsers();
-  if (process.argv.includes("--with-docs")) {
-    await seedDemoDocuments(users.admin);
+  if (resetDocs) {
+    await resetDemoDocumentData();
+  }
+  if (seedDocs) {
+    await seedDemoDocuments(users.admin, users);
   }
   console.log("Supabase seed complete.");
 })().catch((err) => {

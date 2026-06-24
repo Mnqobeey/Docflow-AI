@@ -598,21 +598,28 @@ function Login({ onLogin, error, loading }) {
         font-family: Aptos, 'Segoe UI', Tahoma, sans-serif;
         background: #f4f6f8;
       }
-      .login-grid { width: min(430px, 100%); display: grid; align-items: center; }
-      .login-card { border-radius: 14px; padding: 30px; background: #fff; border: 1px solid #dfe5ec; box-shadow: 0 18px 42px rgba(15,23,42,0.10); }
+      .login-grid { width: min(430px, calc(100vw - 48px)); display: grid; align-items: center; }
+      .login-card { width: 100%; max-width: 430px; box-sizing: border-box; overflow: hidden; border-radius: 14px; padding: 30px; background: #fff; border: 1px solid #dfe5ec; box-shadow: 0 18px 42px rgba(15,23,42,0.10); }
+      .login-card *, .login-card *::before, .login-card *::after { box-sizing: border-box; }
+      .login-logo-wrap { display: flex; justify-content: center; width: 100%; max-width: 100%; margin: 0 0 18px; }
+      .login-logo-frame { width: 100%; max-width: 260px; padding: 10px 12px; border-radius: 10px; background: #f8fafc; border: 1px solid #e5e7eb; overflow: hidden; }
+      .login-logo-frame img { display: block; width: 100%; max-width: 100%; height: auto; margin: 0 auto; }
+      .login-form { width: 100%; max-width: 100%; min-width: 0; }
       .form-heading { margin-bottom: 22px; text-align: left; }
       .form-heading h2 { margin: 0; color: #10223f; letter-spacing: -0.02em; font-size: 26px; }
       .form-heading p { color: #64748b; margin: 6px 0 0; font-size: 14px; }
-      .form-row { margin-bottom: 15px; }
+      .form-row { width: 100%; max-width: 100%; margin: 0 0 15px; }
       .form-row label { display: block; color: #475569; font-size: 13px; font-weight: 700; margin-bottom: 7px; }
-      .form-row input { width: 100%; border: 1px solid #cfd8e3; background: #fff; border-radius: 8px; padding: 12px 13px; color: #10223f; }
-      .primary-action { width: 100%; padding: 12px 20px; border-radius: 8px; background: #0B1E3D; color: #fff; border: none; font-weight: 800; cursor: pointer; box-shadow: none; }
+      .form-row input { display: block; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0; border: 1px solid #cfd8e3; background: #fff; border-radius: 8px; padding: 12px 13px; color: #10223f; }
+      .primary-action { display: block; width: 100%; max-width: 100%; box-sizing: border-box; margin: 0; padding: 12px 20px; border-radius: 8px; background: #0B1E3D; color: #fff; border: none; font-weight: 800; cursor: pointer; box-shadow: none; }
+      .login-form .form-row input, .login-form .primary-action { display: block; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; margin-left: 0; margin-right: 0; }
+      .login-form .form-row input:focus { outline: none; border-color: #0B1E3D; box-shadow: inset 0 0 0 1px #0B1E3D; }
       .primary-action:disabled { opacity: .65; cursor: wait; }
       .alert-error { color: #b91c1c; background: #fff1f2; border: 1px solid #fecdd3; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
-      .demo-account-panel { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
+      .demo-account-panel { width: 100%; max-width: 100%; margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
       .demo-account-panel > p { margin: 0 0 10px; color: #64748b; font-size: 13px; font-weight: 700; }
       .demo-account-list { display: grid; gap: 8px; }
-      .demo-account { width: 100%; display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid #e5e7eb; background: #f8fafc; border-radius: 8px; padding: 9px 11px; cursor: pointer; text-align: left; }
+      .demo-account { width: 100%; max-width: 100%; box-sizing: border-box; display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 0; border: 1px solid #e5e7eb; background: #f8fafc; border-radius: 8px; padding: 9px 11px; cursor: pointer; text-align: left; }
       .demo-account b { display: block; color: #10223f; }
       .demo-account small { color: #64748b; }
       .demo-account em { color: #475569; font-style: normal; font-size: 11px; font-weight: 800; }
@@ -621,21 +628,28 @@ function Login({ onLogin, error, loading }) {
     <div className="login-stage">
       <div className="login-grid">
         <section className="login-card">
+          <div className="login-logo-wrap">
+            <div className="login-logo-frame">
+              <img src="/mindrift-logo.png" alt="MindRift logo" />
+            </div>
+          </div>
           <div className="form-heading">
             <h2>DocFlow AI</h2>
             <p>Sign in to the document approval workspace.</p>
           </div>
-          {[["Username", u, setU, "username", "text", "e.g. admin"], ["Password", p, setP, "current-password", "password", ""]].map(([lbl, val, set, ac, type, ph]) => (
-            <div key={lbl} className="form-row">
-              <label>{lbl}</label>
-              <input type={type} value={val} onChange={e => set(e.target.value)} onKeyDown={e => e.key === "Enter" && onLogin(u, p)}
-                placeholder={ph} autoComplete={ac} />
-            </div>
-          ))}
-          {error && <p className="alert-error">{error}</p>}
-          <button className="primary-action" onClick={() => onLogin(u, p)} disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
-          </button>
+          <div className="login-form">
+            {[["Username", u, setU, "username", "text", "e.g. admin"], ["Password", p, setP, "current-password", "password", ""]].map(([lbl, val, set, ac, type, ph]) => (
+              <div key={lbl} className="form-row">
+                <label>{lbl}</label>
+                <input type={type} value={val} onChange={e => set(e.target.value)} onKeyDown={e => e.key === "Enter" && onLogin(u, p)}
+                  placeholder={ph} autoComplete={ac} />
+              </div>
+            ))}
+            {error && <p className="alert-error">{error}</p>}
+            <button className="primary-action" onClick={() => onLogin(u, p)} disabled={loading}>
+              {loading ? "Signing in..." : "Sign in"}
+            </button>
+          </div>
 
           <div className="demo-account-panel">
             <p>Available sign-ins</p>

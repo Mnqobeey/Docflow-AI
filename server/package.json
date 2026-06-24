@@ -10,6 +10,7 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "seed:supabase": "node scripts/seedSupabase.js",
+    "reset:demo": "node scripts/seedSupabase.js --reset-demo-docs --with-docs",
     "smoke:supabase": "node scripts/smokeSupabase.js",
     "smoke:ai": "node scripts/smokeAiProviders.js"
   },
