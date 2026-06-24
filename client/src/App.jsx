@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 /* ================================================================
    CONSTANTS
@@ -341,6 +342,29 @@ function isPositiveAmountClient(value) {
   return Number.isFinite(n) && n > 0;
 }
 
+function downloadExcelWorkbook(wb, filename) {
+  const workbookBytes = new Uint8Array(XLSX.write(wb, { bookType: "xlsx", type: "array", cellStyles: true }));
+  const zip = unzipSync(workbookBytes);
+  const sheetPath = "xl/worksheets/sheet1.xml";
+  if (zip[sheetPath]) {
+    const pane = '<pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A4" sqref="A4"/>';
+    const xml = strFromU8(zip[sheetPath]);
+    const patched = xml.includes("<pane ")
+      ? xml
+      : xml.replace(/<sheetView([^>]*)\/>/, `<sheetView$1>${pane}</sheetView>`);
+    zip[sheetPath] = strToU8(patched);
+  }
+  const blob = new Blob([zipSync(zip)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function isOptionalNumericClient(value) {
   if (value === "" || value === null || value === undefined) return true;
   return Number.isFinite(Number(value));
@@ -598,11 +622,11 @@ function Login({ onLogin, error, loading }) {
         font-family: Aptos, 'Segoe UI', Tahoma, sans-serif;
         background: #f4f6f8;
       }
-      .login-grid { width: min(430px, calc(100vw - 48px)); display: grid; align-items: center; }
-      .login-card { width: 100%; max-width: 430px; box-sizing: border-box; overflow: hidden; border-radius: 14px; padding: 30px; background: #fff; border: 1px solid #dfe5ec; box-shadow: 0 18px 42px rgba(15,23,42,0.10); }
+      .login-grid { width: min(500px, calc(100vw - 48px)); display: grid; align-items: center; }
+      .login-card { width: 100%; max-width: 500px; box-sizing: border-box; overflow: hidden; border-radius: 14px; padding: 32px; background: #fff; border: 1px solid #dfe5ec; box-shadow: 0 18px 42px rgba(15,23,42,0.10); }
       .login-card *, .login-card *::before, .login-card *::after { box-sizing: border-box; }
       .login-logo-wrap { display: flex; justify-content: center; width: 100%; max-width: 100%; margin: 0 0 18px; }
-      .login-logo-frame { width: 100%; max-width: 260px; padding: 10px 12px; border-radius: 10px; background: #f8fafc; border: 1px solid #e5e7eb; overflow: hidden; }
+      .login-logo-frame { width: 100%; max-width: 340px; padding: 10px 12px; border-radius: 10px; background: #f8fafc; border: 1px solid #e5e7eb; overflow: hidden; }
       .login-logo-frame img { display: block; width: 100%; max-width: 100%; height: auto; margin: 0 auto; }
       .login-form { width: 100%; max-width: 100%; min-width: 0; }
       .form-heading { margin-bottom: 22px; text-align: left; }
@@ -1118,33 +1142,168 @@ function Reports({ docs, user, onUpdate }) {
   const excl     = total - totalVat;
   const byVendor = {};
   rows.forEach(d => { const v = d.extracted?.vendor_name || "Unknown"; byVendor[v] = (byVendor[v] || 0) + (Number(d.extracted?.total_amount) || 0); });
+  const statusSummary = Object.entries(STATUS_META)
+    .map(([key, meta]) => ({ key, label: meta.label, count: rows.filter(d => d.status === key).length }))
+    .filter(item => item.count > 0);
 
   async function exportXlsx() {
     if (exporting) return;
     setExporting("excel");
     await new Promise(requestAnimationFrame);
-    const data = rows.map(d => ({
-      "Type": d.type === "invoice" ? "Invoice" : "Credit Note", "File": d.fileName,
-      "Vendor": d.extracted?.vendor_name || "", "Invoice #": d.extracted?.invoice_number || "",
-      "Date": d.extracted?.invoice_date || "", "Amount": Number(d.extracted?.total_amount) || 0,
-      "VAT": Number(d.extracted?.vat_amount) || 0,
-      "Excl VAT": (Number(d.extracted?.total_amount) || 0) - (Number(d.extracted?.vat_amount) || 0),
-      "Status": STATUS_META[d.status]?.label || d.status, "Duplicate": d.isDup ? "Yes" : "No",
-      "By": d.uploadedBy, "Uploaded": d.uploadDate.slice(0, 10),
-      "Trail": d.approvals.map(a => `${STEP_LABELS[a.step]}: ${a.action}`).join(" | "),
-    }));
-    const ws = XLSX.utils.json_to_sheet(data), wb = XLSX.utils.book_new();
+
+    const headers = ["Type", "File", "Vendor", "Invoice #", "Date", "Amount", "VAT", "Excl VAT", "Status", "Duplicate", "By", "Uploaded", "Approval Trail"];
+    const toDate = (value) => {
+      const iso = String(value || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "";
+      const [year, month, day] = iso.split("-").map(Number);
+      return new Date(Date.UTC(year, month - 1, day));
+    };
+    const approvalTrail = (doc) => doc.approvals.map(a => {
+      const action = a.action === "approve" ? "Approved" : a.action === "reject" ? "Rejected" : a.action;
+      return `${STEP_LABELS[a.step] || `Step ${a.step}`}: ${action}`;
+    }).join(" | ");
+    const dataRows = rows.map(d => {
+      const amount = Number(d.extracted?.total_amount) || 0;
+      const vat = Number(d.extracted?.vat_amount) || 0;
+      return [
+        d.type === "invoice" ? "Invoice" : "Credit Note",
+        d.fileName,
+        d.extracted?.vendor_name || "",
+        d.extracted?.invoice_number || "",
+        toDate(d.extracted?.invoice_date),
+        amount,
+        vat,
+        amount - vat,
+        STATUS_META[d.status]?.label || d.status,
+        d.isDup ? "Yes" : "No",
+        d.uploadedBy,
+        toDate(d.uploadDate),
+        approvalTrail(d),
+      ];
+    });
+
+    const generatedAt = new Date();
+    const aoa = [
+      ["DocFlow AI Report"],
+      [`Generated: ${generatedAt.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })}`, "", "", "", "", "", "", "", `Records: ${rows.length}`],
+      headers,
+      ...dataRows,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true }), wb = XLSX.utils.book_new();
+    const lastRow = aoa.length;
+    const lastCol = headers.length - 1;
+    const tableRef = XLSX.utils.encode_range({ s: { r: 2, c: 0 }, e: { r: Math.max(2, lastRow - 1), c: lastCol } });
+    const fullRef = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(2, lastRow - 1), c: lastCol } });
+    const border = {
+      top: { style: "thin", color: { rgb: "DBE3EE" } },
+      right: { style: "thin", color: { rgb: "DBE3EE" } },
+      bottom: { style: "thin", color: { rgb: "DBE3EE" } },
+      left: { style: "thin", color: { rgb: "DBE3EE" } },
+    };
+    const baseCell = {
+      font: { name: "Aptos", sz: 11, color: { rgb: "334155" } },
+      alignment: { vertical: "top" },
+      border,
+    };
+    const numberFormat = '"R" #,##0.00';
+    const statusStyles = {
+      approved: { font: { name: "Aptos", sz: 11, bold: true, color: { rgb: "065F46" } }, fill: { fgColor: { rgb: "D1FAE5" } } },
+      rejected: { font: { name: "Aptos", sz: 11, bold: true, color: { rgb: "991B1B" } }, fill: { fgColor: { rgb: "FEE2E2" } } },
+      pending: { font: { name: "Aptos", sz: 11, bold: true, color: { rgb: "92400E" } }, fill: { fgColor: { rgb: "FEF3C7" } } },
+    };
+
+    ws["!ref"] = fullRef;
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
+      { s: { r: 1, c: 8 }, e: { r: 1, c: lastCol } },
+    ];
+    ws["!cols"] = [
+      { wch: 14 }, { wch: 30 }, { wch: 34 }, { wch: 22 }, { wch: 14 },
+      { wch: 16 }, { wch: 15 }, { wch: 16 }, { wch: 26 }, { wch: 12 },
+      { wch: 18 }, { wch: 14 }, { wch: 46 },
+    ];
+    ws["!rows"] = [
+      { hpt: 26 },
+      { hpt: 19 },
+      { hpt: 24 },
+      ...dataRows.map(row => ({ hpt: String(row[12] || "").length > 35 ? 34 : 23 })),
+    ];
+    ws["!autofilter"] = { ref: tableRef };
+    ws["!freeze"] = { xSplit: 0, ySplit: 3, topLeftCell: "A4", activePane: "bottomLeft", state: "frozen" };
+
+    ws.A1.s = {
+      font: { name: "Aptos Display", sz: 18, bold: true, color: { rgb: "0B1E3D" } },
+      alignment: { vertical: "center" },
+    };
+    ws.A2.s = {
+      font: { name: "Aptos", sz: 10, color: { rgb: "64748B" } },
+      alignment: { vertical: "center" },
+    };
+    ws.I2.s = {
+      font: { name: "Aptos", sz: 10, bold: true, color: { rgb: "0B1E3D" } },
+      alignment: { horizontal: "right", vertical: "center" },
+    };
+
+    for (let c = 0; c <= lastCol; c += 1) {
+      const addr = XLSX.utils.encode_cell({ r: 2, c });
+      ws[addr].s = {
+        font: { name: "Aptos", sz: 10, bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "0B1E3D" } },
+        alignment: { horizontal: c >= 5 && c <= 7 ? "right" : "left", vertical: "center", wrapText: true },
+        border,
+      };
+    }
+
+    dataRows.forEach((row, idx) => {
+      const r = idx + 3;
+      const statusText = String(row[8] || "").toLowerCase();
+      const statusStyle = statusText.includes("approved")
+        ? statusStyles.approved
+        : statusText.includes("rejected")
+          ? statusStyles.rejected
+          : statusStyles.pending;
+      for (let c = 0; c <= lastCol; c += 1) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (!ws[addr]) continue;
+        ws[addr].s = {
+          ...baseCell,
+          alignment: { ...baseCell.alignment, horizontal: c >= 5 && c <= 7 ? "right" : "left", wrapText: c === 12 },
+        };
+        if (c === 4 || c === 11) ws[addr].z = "yyyy-mm-dd";
+        if (c >= 5 && c <= 7) ws[addr].z = numberFormat;
+        if (c === 8) {
+          ws[addr].s = { ...ws[addr].s, ...statusStyle, border, alignment: { vertical: "top", wrapText: true } };
+        }
+      }
+    });
+
+    wb.Props = {
+      Title: "DocFlow AI Report",
+      Subject: "Filtered document report",
+      Author: "DocFlow AI",
+      CreatedDate: generatedAt,
+    };
     XLSX.utils.book_append_sheet(wb, ws, "Report");
-    XLSX.writeFile(wb, "docflow-report.xlsx");
+    downloadExcelWorkbook(wb, "docflow-report.xlsx");
     setTimeout(() => setExporting(""), 250);
   }
 
   function exportPdf() {
     if (exporting) return;
     setExporting("pdf");
-    setTimeout(() => {
-      window.print();
+    document.body.classList.add("printing-report");
+    let fallbackTimer;
+    const cleanup = () => {
+      document.body.classList.remove("printing-report");
+      window.removeEventListener("afterprint", cleanup);
+      if (fallbackTimer) window.clearTimeout(fallbackTimer);
       setExporting("");
+    };
+    window.addEventListener("afterprint", cleanup);
+    setTimeout(() => {
+      fallbackTimer = window.setTimeout(cleanup, 10000);
+      window.print();
     }, 100);
   }
 
@@ -1171,7 +1330,193 @@ function Reports({ docs, user, onUpdate }) {
 
   return (
     <div className="page-shell page-enter reports-page">
-      <style>{`@media print { .noprint { display:none!important; } }`}</style>
+      <style>{`
+        @media screen {
+          .report-export-content { display: none !important; }
+        }
+        @media print {
+          @page { size: A4 portrait; margin: 12mm; }
+          body.printing-report { background: #fff !important; }
+          body.printing-report * { visibility: hidden !important; }
+          body.printing-report .desktop-nav,
+          body.printing-report .mobile-nav,
+          body.printing-report .noprint,
+          body.printing-report .stats-grid {
+            display: none !important;
+          }
+          body.printing-report .app-shell {
+            display: block !important;
+            min-height: auto !important;
+            background: #fff !important;
+          }
+          body.printing-report .main-stage {
+            display: block !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+            background: #fff !important;
+          }
+          body.printing-report .reports-page {
+            display: block !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          body.printing-report .reports-page > :not(.report-export-content) {
+            display: none !important;
+          }
+          body.printing-report .report-export-content,
+          body.printing-report .report-export-content * {
+            visibility: visible !important;
+          }
+          body.printing-report .report-export-content {
+            display: block !important;
+            position: absolute;
+            inset: 0 auto auto 0;
+            width: 100%;
+            color: #0f172a !important;
+            background: #fff !important;
+            font-family: Aptos, 'Segoe UI', Tahoma, sans-serif;
+            line-height: 1.35;
+          }
+          body.printing-report .report-export-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: flex-start;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #dbe3ee;
+            margin-bottom: 12px;
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          body.printing-report .report-export-title {
+            margin: 0;
+            color: #0B1E3D !important;
+            font-size: 21px;
+            line-height: 1.2;
+            letter-spacing: -0.01em;
+          }
+          body.printing-report .report-export-subtitle,
+          body.printing-report .report-export-meta {
+            margin: 4px 0 0;
+            color: #64748b !important;
+            font-size: 10.5px;
+          }
+          body.printing-report .report-export-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+          body.printing-report .report-export-kpi,
+          body.printing-report .report-export-status,
+          body.printing-report .report-export-table-wrap {
+            border: 1px solid #dbe3ee;
+            background: #fff !important;
+            border-radius: 7px;
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          body.printing-report .report-export-kpi {
+            padding: 8px 10px;
+          }
+          body.printing-report .report-export-kpi span {
+            display: block;
+            color: #64748b !important;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+          }
+          body.printing-report .report-export-kpi strong {
+            display: block;
+            margin-top: 3px;
+            color: #0B1E3D !important;
+            font-size: 14px;
+          }
+          body.printing-report .report-export-section-title {
+            margin: 0 0 7px;
+            color: #0B1E3D !important;
+            font-size: 11px;
+            font-weight: 800;
+          }
+          body.printing-report .report-export-status {
+            padding: 9px 10px;
+            margin-bottom: 12px;
+          }
+          body.printing-report .report-export-status-list {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 6px 10px;
+          }
+          body.printing-report .report-export-status-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            color: #334155 !important;
+            font-size: 10px;
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          body.printing-report .report-export-status-row strong {
+            color: #0B1E3D !important;
+          }
+          body.printing-report .report-export-table-wrap {
+            overflow: visible !important;
+            page-break-inside: auto;
+            break-inside: auto;
+          }
+          body.printing-report .report-export-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 9.5px;
+            page-break-inside: auto;
+            break-inside: auto;
+          }
+          body.printing-report .report-export-table thead {
+            display: table-header-group;
+          }
+          body.printing-report .report-export-table tr {
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          body.printing-report .report-export-table th,
+          body.printing-report .report-export-table td {
+            padding: 6px 7px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+            vertical-align: top;
+            color: #334155 !important;
+          }
+          body.printing-report .report-export-table th {
+            background: #f8fafc !important;
+            color: #475569 !important;
+            font-size: 8.5px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+          }
+          body.printing-report .report-export-table td:first-child {
+            color: #0B1E3D !important;
+            font-weight: 700;
+          }
+          body.printing-report .report-export-table .amount-cell,
+          body.printing-report .report-export-table .amount-head {
+            text-align: right;
+            color: #0B1E3D !important;
+            font-weight: 800;
+          }
+          body.printing-report .report-export-table .status-cell span {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 2px 7px;
+            font-size: 8.5px;
+            font-weight: 700;
+          }
+        }
+      `}</style>
       <div className="noprint">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap", gap: 8 }}>
           <div>
@@ -1204,6 +1549,70 @@ function Reports({ docs, user, onUpdate }) {
           {TABS.map(t => <button key={t.key} onClick={() => setTab(t.key)} style={{ flex: 1, padding: "9px 8px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, backgroundColor: tab === t.key ? NAVY : "transparent", color: tab === t.key ? "#fff" : "#9ca3af" }}>{t.label}</button>)}
         </div>
       </div>
+
+      <section className="report-export-content" aria-label="DocFlow AI PDF report">
+        <div className="report-export-header">
+          <div>
+            <h1 className="report-export-title">DocFlow AI Report</h1>
+            <p className="report-export-subtitle">{rows.length} document{rows.length !== 1 ? "s" : ""} matching current report filters</p>
+          </div>
+          <p className="report-export-meta">Generated {new Date().toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })}</p>
+        </div>
+
+        <div className="report-export-grid">
+          {[["Documents", rows.length, v => v], ["Total", total, R], ["VAT", totalVat, R], ["Excl. VAT", excl, R]].map(([label, value, format]) => (
+            <div key={label} className="report-export-kpi">
+              <span>{label}</span>
+              <strong>{format(value)}</strong>
+            </div>
+          ))}
+        </div>
+
+        <div className="report-export-status">
+          <p className="report-export-section-title">Status Summary</p>
+          <div className="report-export-status-list">
+            {statusSummary.length === 0
+              ? <div className="report-export-status-row"><span>No matching statuses</span><strong>0</strong></div>
+              : statusSummary.map(item => (
+                  <div key={item.key} className="report-export-status-row">
+                    <span>{item.label}</span>
+                    <strong>{item.count}</strong>
+                  </div>
+                ))
+            }
+          </div>
+        </div>
+
+        <div className="report-export-table-wrap">
+          <table className="report-export-table">
+            <thead>
+              <tr>
+                <th style={{ width: "30%" }}>Vendor</th>
+                <th style={{ width: "23%" }}>Document</th>
+                <th style={{ width: "14%" }}>Date</th>
+                <th style={{ width: "19%" }}>Status</th>
+                <th className="amount-head" style={{ width: "14%" }}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan="5" style={{ textAlign: "center", padding: 16, color: "#64748b" }}>No documents match the current filters.</td></tr>
+              ) : rows.map(d => {
+                const statusMeta = STATUS_META[d.status] || { label: d.status, color: "#374151", bg: "#f3f4f6" };
+                return (
+                  <tr key={d.id}>
+                    <td>{d.extracted?.vendor_name || "-"}</td>
+                    <td>{d.extracted?.invoice_number || d.fileName || "-"}</td>
+                    <td>{d.extracted?.invoice_date || d.uploadDate.slice(0, 10)}</td>
+                    <td className="status-cell"><span style={{ color: statusMeta.color, backgroundColor: statusMeta.bg }}>{statusMeta.label}</span></td>
+                    <td className="amount-cell">{R(d.extracted?.total_amount)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {/* SPEND */}
       {tab === "spend" && <>
